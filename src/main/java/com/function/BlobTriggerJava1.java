@@ -49,21 +49,19 @@ public class BlobTriggerJava1
         SymbolHelper sHelper = new SymbolHelper();
         sHelper = new Gson().fromJson(contentStr, SymbolHelper.class);
         context.getLogger().info("Symbol: " + sHelper.symbol + " Value: " + sHelper.value);
-        String deltaVal = sHelper.value;
-
-        // persist to redis
-        _persistToRedis(context, sHelper);
-
-        // put payload onto service bus to be cached in cosmos
-        String connectionString = System.getenv("SB_CON_STR");
-        String queueName        = System.getenv("SB_QNAME");
         
         SymbolDeltaHelper deltaHelper = new SymbolDeltaHelper();
         deltaHelper.symbol        = sHelper.symbol;
         deltaHelper.curValue      = sHelper.value;
-        deltaHelper.delta         = deltaVal;
         deltaHelper.origOrder     = name;
         deltaHelper.procTimeStamp = String.valueOf(System.currentTimeMillis());
+
+        // persist to redis
+        _persistToRedis(context, deltaHelper);
+
+        // put payload onto service bus to be cached in cosmos
+        String connectionString = System.getenv("SB_CON_STR");
+        String queueName        = System.getenv("SB_QNAME");        
 
         String sbPayload = new Gson().toJson(deltaHelper);
         context.getLogger().info("SB Payload:\n" + sbPayload);
@@ -73,10 +71,9 @@ public class BlobTriggerJava1
         String bPayload   = "{ \"blobname\": \"" + name + "\"}";
         String urlString = System.getenv("DELETEBLOB_URL"); 
         _sendHTTPPostReq(bPayload, urlString);
-
     }
 
-    private void _persistToRedis(ExecutionContext aContext, SymbolHelper aSHelper)
+    private void _persistToRedis(ExecutionContext aContext, SymbolDeltaHelper aSHelper)
     {
         boolean useSsl = true;
         String cacheHostname = System.getenv("REDISCACHEHOSTNAME");
@@ -91,10 +88,12 @@ public class BlobTriggerJava1
         
         aContext.getLogger().info("Redis ping: " + jedis.ping());
 
-        if (!"".equals(aSHelper.value) && "0".equals(aSHelper.value))
+        if (!"".equals(aSHelper.curValue) && "0".equals(aSHelper.curValue))
         {
             jedis.flushDB();
             jedis.close();
+
+            aSHelper.delta = "0";
 
             return;
         }
@@ -105,16 +104,16 @@ public class BlobTriggerJava1
             aContext.getLogger().info("Cached hit: " + aSHelper.symbol + " -> " + cacheStr);
 
             Integer cacheVal = (Integer) Integer.parseInt(cacheStr);
-            Integer newVal   = (Integer) Integer.parseInt(aSHelper.value);
+            Integer newVal   = (Integer) Integer.parseInt(aSHelper.curValue);
             
-            Integer curVal = cacheVal + newVal;
-            aSHelper.value = String.valueOf(curVal);
+            Integer deltaVal = newVal - cacheVal;
+            aSHelper.delta = String.valueOf(deltaVal);
         }
         
-        jedis.set(aSHelper.symbol, aSHelper.value);
+        jedis.set(aSHelper.symbol, aSHelper.curValue);
         jedis.close();
 
-        aContext.getLogger().info("Cached to Redis: " + aSHelper.symbol + " -> " + aSHelper.value);
+        aContext.getLogger().info("Cached to Redis: " + aSHelper.symbol + " -> " + aSHelper.curValue);
     }
 
     private void _sendHTTPPostReq(String aPayload, String aUrlString)
