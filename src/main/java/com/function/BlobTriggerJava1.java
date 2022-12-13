@@ -34,7 +34,10 @@ public class BlobTriggerJava1
 
     /**
      * This function will be invoked when a new or updated blob is detected at the specified path. The blob contents are provided as input to this function.
+     * 
      */
+    
+    // by adding source to the trigger we can also make this an event grid trigger that doesn't contain the full payload
     @FunctionName("BlobTriggerJava1")
     @StorageAccount("demolcsappdevsymbolsa1_STORAGE")
     public void run(
